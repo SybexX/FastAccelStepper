@@ -55,7 +55,7 @@ class StepperQueue {
   // This has been called isReadyForCommands().
   //
 #if defined(SUPPORT_RP_PICO)
-  bool _isStarting;
+  bool _isActive; // indicates that the sm should be serviced by the ISR
   bool isRunning();
   bool isReadyForCommands();
   uint8_t _step_pin;
@@ -68,7 +68,6 @@ class StepperQueue {
   int32_t getCurrentStepCount();
   void attachDirPinToStatemachine();
   void setDirPinState(bool high);
-  void commandAdded();
 #endif
 #if defined(SUPPORT_ESP32)
   volatile bool _isRunning;

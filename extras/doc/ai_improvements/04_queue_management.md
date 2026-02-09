@@ -23,7 +23,7 @@ public:
     
     // Platform-specific members
 #if defined(SUPPORT_RP_PICO)
-    bool _isStarting;
+    bool _isActive;
     PIO pio;
     uint sm;
     bool claim_pio_sm(FastAccelStepperEngine* engine);

@@ -131,7 +131,7 @@ AqeResultCode StepperQueue::addQueueEntry(const struct stepper_command_s* cmd,
 #if defined(SUPPORT_RP_PICO)
   // with pio using interrupts, the queue may not be full
   // and then the interrupts are disabled.
-   commandAdded();
+   startQueue();
 #endif
 #ifdef TRACE
     // WHY IS start 0 in seq_01c
