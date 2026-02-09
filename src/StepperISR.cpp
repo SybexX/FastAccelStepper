@@ -127,14 +127,19 @@ AqeResultCode StepperQueue::addQueueEntry(const struct stepper_command_s* cmd,
 #endif
     startQueue();
   }
-#ifdef TRACE
   else {
+#if defined(SUPPORT_RP_PICO)
+  // with pio using interrupts, the queue may not be full
+  // and then the interrupts are disabled.
+   commandAdded();
+#endif
+#ifdef TRACE
     // WHY IS start 0 in seq_01c
     Serial.print(isRunning() ? 'R' : 'T');
     Serial.print(start ? '1' : '0');
     Serial.println('N');
-  }
 #endif
+  }
   return AQE_OK;
 }
 

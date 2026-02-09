@@ -68,6 +68,7 @@ class StepperQueue {
   int32_t getCurrentStepCount();
   void attachDirPinToStatemachine();
   void setDirPinState(bool high);
+  void commandAdded();
 #endif
 #if defined(SUPPORT_ESP32)
   volatile bool _isRunning;

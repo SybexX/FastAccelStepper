@@ -1,3 +1,6 @@
+pre-0.33.13:
+- pico: Fill pio-TX-queue by interrupt and not by a RTOS-Task (#345)
+
 0.33.12:
 - esp32: change minimum period to 4 from 2 in order to fix #306
 - esp32: fix error in `esp32xx_rmt`

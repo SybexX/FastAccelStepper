@@ -4,11 +4,27 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include "hardware/irq.h"
 #include "pico_pio.h"
 
 // Here are the global variables to interface with the interrupts
 StepperQueue fas_queue[NUM_QUEUES];
 static stepper_pio_program* program;
+
+// Forward declarations for per-PIO IRQ trampoline functions
+static void pio0_fifo_irq_handler();
+static void pio1_fifo_irq_handler();
+#if NUM_PIOS > 2
+static void pio2_fifo_irq_handler();
+#endif
+
+static const irq_handler_t pio_fifo_irq_handlers[] = {
+    pio0_fifo_irq_handler,
+    pio1_fifo_irq_handler,
+#if NUM_PIOS > 2
+    pio2_fifo_irq_handler,
+#endif
+};
 
 bool StepperQueue::init(FastAccelStepperEngine* engine, uint8_t queue_num,
                         uint8_t step_pin) {
@@ -95,11 +111,22 @@ bool StepperQueue::claim_pio_sm(FastAccelStepperEngine* engine) {
   if (rc) {
     engine->pio[pio_index] = pio;
     engine->claimed_pios = pio_index + 1;
+    // Set up FIFO interrupt handler for the newly claimed PIO block
+    uint pio_idx = pio_get_index(pio);
+    irq_set_exclusive_handler(PIO_IRQ_NUM(pio, 0),
+                              pio_fifo_irq_handlers[pio_idx]);
+    irq_set_enabled(PIO_IRQ_NUM(pio, 0), true);
   }
   return rc;
 }
 
 void StepperQueue::setupSM() {
+  // Serial.print("setupSM pio=");
+  // uint pio_idx = pio_get_index(pio);
+  // Serial.print(pio_idx);
+  // Serial.print(" sm=");
+  // Serial.println(sm);
+  
   pio_sm_config c = pio_get_default_sm_config();
   // Map the state machine's OUT pin group to one pin, namely the `pin`
   // parameter to this function.
@@ -125,7 +152,9 @@ void StepperQueue::connect() {
 }
 
 void StepperQueue::disconnect() {
-  pio_sm_set_enabled(pio, sm, false);
+  // not sure, if disconnecting works. As long as connect() does not reenable sm
+  // then the connect() will not work. so keep the sm running for now
+  // pio_sm_set_enabled(pio, sm, false);
   gpio_init(_step_pin);
   if ((dirPin != PIN_UNDEFINED) && ((dirPin & PIN_EXTERNAL_FLAG) == 0)) {
     gpio_init(dirPin);
@@ -164,17 +193,38 @@ static bool push_command(StepperQueue* q) {
   return true;
 }
 
+void StepperQueue::commandAdded() {
+  // Disable FIFO interrupt during initial fill to prevent race with ISR
+  pio_set_irq0_source_enabled(pio,
+      pio_get_tx_fifo_not_full_interrupt_source(sm), false);
+  while (push_command(this)) {
+  };
+  // Enable TX FIFO not full interrupt - ISR will keep FIFO fed from now on
+  pio_set_irq0_source_enabled(pio,
+      pio_get_tx_fifo_not_full_interrupt_source(sm), true);
+}
+
 void StepperQueue::startQueue() {
   // These commands would clear isr and consequently the sm state's position is
   // lost
   //  pio_sm_set_enabled(pio, sm, true); // sm is running, otherwise loop()
   //  stops pio_sm_clear_fifos(pio, sm); pio_sm_restart(pio, sm);
+
+  // Disable FIFO interrupt during initial fill to prevent race with ISR
+  pio_set_irq0_source_enabled(pio,
+      pio_get_tx_fifo_not_full_interrupt_source(sm), false);
   _isStarting = true;
   while (push_command(this)) {
   };
   _isStarting = false;
+  // Enable TX FIFO not full interrupt - ISR will keep FIFO fed from now on
+  pio_set_irq0_source_enabled(pio,
+      pio_get_tx_fifo_not_full_interrupt_source(sm), true);
 }
 void StepperQueue::forceStop() {
+  // Disable FIFO interrupt before stopping to prevent ISR from pushing commands
+  pio_set_irq0_source_enabled(pio,
+      pio_get_tx_fifo_not_full_interrupt_source(sm), false);
   pio_sm_clear_fifos(pio, sm);
   pio_sm_restart(pio, sm);
   // ensure step is zero
@@ -232,6 +282,77 @@ bool StepperQueue::isValidStepPin(uint8_t step_pin) {
 }
 
 //*************************************************************************************************
+//
+// PIO FIFO Interrupt Handler
+//
+// The PIO hardware provides a "TX FIFO not full" interrupt source per state
+// machine.  This is a level-triggered interrupt: it stays asserted as long as
+// the TX FIFO has at least one free slot (level < 4).
+//
+// There is no configurable FIFO watermark/threshold in the PIO hardware, so
+// the ISR checks the actual FIFO level via pio_sm_get_tx_fifo_level() to
+// distinguish two conditions:
+//
+//   a) FIFO just emptied  – level == 0
+//      All entries have been consumed by the state machine.
+//
+//   b) FIFO low           – level <= 2  (1 or 2 entries still present)
+//      The FIFO is running low and should be refilled soon.
+//
+// After detecting the condition the handler pushes as many commands as
+// possible from the software queue into the FIFO.  When the software queue is
+// empty, the interrupt source for that SM is disabled to prevent the
+// level-triggered interrupt from firing continuously.  The source is
+// re-enabled by startQueue() (initial fill), which is
+// called periodically from StepperTaskQueue.
+//
+//*************************************************************************************************
+
+static void pio_fifo_irq_handler(PIO pio) {
+  uint32_t ints = pio->ints0;
+
+  for (uint8_t i = 0; i < NUM_QUEUES; i++) {
+    StepperQueue* q = &fas_queue[i];
+    if (q->_step_pin == PIN_UNDEFINED) {
+      continue;  // skip uninitialized queues
+    } 
+    if (q->pio != pio) continue;
+    if (q->_isStarting) continue;
+
+    // Check if this SM's TX FIFO not full interrupt is pending
+    if (!(ints & (1u << (pis_sm0_tx_fifo_not_full + q->sm)))) continue;
+
+    // Determine current FIFO fill level
+    // uint level = pio_sm_get_tx_fifo_level(pio, q->sm);
+
+    // if (level == 0) {
+      // Case a): FIFO just emptied – all entries consumed by the SM
+    // }
+
+    // if (level <= 2) {
+      // Case b): FIFO low – only 1 or 2 entries remain
+    // }
+
+    // Push as many commands as possible to refill the FIFO
+    while (push_command(q)) {
+    }
+
+    // If the software queue is empty, disable the interrupt source for this
+    // SM to prevent the level-triggered interrupt from firing continuously.
+    if (q->read_idx == q->next_write_idx) {
+      pio_set_irq0_source_enabled(
+          pio, pio_get_tx_fifo_not_full_interrupt_source(q->sm), false);
+    }
+  }
+}
+
+static void pio0_fifo_irq_handler() { pio_fifo_irq_handler(pio0); }
+static void pio1_fifo_irq_handler() { pio_fifo_irq_handler(pio1); }
+#if NUM_PIOS > 2
+static void pio2_fifo_irq_handler() { pio_fifo_irq_handler(pio2); }
+#endif
+
+//*************************************************************************************************
 void StepperTask(void* parameter) {
   FastAccelStepperEngine* engine = (FastAccelStepperEngine*)parameter;
   while (true) {
@@ -241,40 +362,15 @@ void StepperTask(void* parameter) {
     vTaskDelay(delay_time);
   }
 }
-void FastAccelStepperEngine::pushCommands() {
-  for (uint8_t i = 0; i < MAX_STEPPER; i++) {
-    FastAccelStepper* s = _stepper[i];
-    if (s) {
-      StepperQueue* q = &fas_queue[s->_queue_num];
-      if (q->_isStarting) {
-        continue;
-      }
-      if (q->isRunning()) {
-        // sm is running, so we can push commands
-        // without this, any new command in queue would be pushed immediately
-        while (push_command(q)) {
-        };
-      }
-    }
-  }
-}
-void StepperTaskQueue(void* parameter) {
-  FastAccelStepperEngine* engine = (FastAccelStepperEngine*)parameter;
-  while (true) {
-    engine->pushCommands();
-    const TickType_t delay_time = 1;
-    vTaskDelay(delay_time);
-  }
-}
 
 void fas_init_engine(FastAccelStepperEngine* engine) {
+  for (uint8_t i = 0; i < NUM_QUEUES; i++) {
+    fas_queue[i]._step_pin = PIN_UNDEFINED;
+  }
 #define STACK_SIZE 3000
 #define PRIORITY (configMAX_PRIORITIES - 1)
   engine->_delay_ms = DELAY_MS_BASE;
   xTaskCreate(StepperTask, "StepperTask", STACK_SIZE, engine, PRIORITY, NULL);
-
-  xTaskCreate(StepperTaskQueue, "StepperTaskQueue", STACK_SIZE, engine,
-              PRIORITY, NULL);
 
   program = stepper_make_program();
 }

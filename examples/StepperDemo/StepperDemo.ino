@@ -974,6 +974,13 @@ void test_direct_drive(const struct stepper_config_s* stepper) {
 
 void setup() {
   PRINT_INIT();
+#if defined(PICO_RP2040) || defined(PICO_RP2350)
+  for(uint8_t i = 0;i < 5;i++) {
+     Serial.print("Start pause (5s): ");
+     Serial.println(i);
+     delay(1000);
+  }
+#endif
 #if defined(ARDUINO_ARCH_ESP32)
   printf("LOG start\n");
   esp_log_level_set("*", ESP_LOG_INFO);
