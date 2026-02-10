@@ -194,6 +194,10 @@ static bool push_command(StepperQueue* q) {
 }
 
 void StepperQueue::startQueue() {
+  // queue is already running with ISR enabled, so nothing to do here
+  if (_isActive) {
+     return;
+  }
   // These commands would clear isr and consequently the sm state's position is
   // lost
   //  pio_sm_set_enabled(pio, sm, true); // sm is running, otherwise loop()
@@ -222,12 +226,14 @@ void StepperQueue::forceStop() {
   // init pc to 0 (perhaps not needed)
   pio_sm_exec(pio, sm, pio_encode_jmp(0));
   // ensure step is zero
-  uint32_t entry = pio_make_fifo_entry(
-      queue_end.dir, 0, 0, LOOPS_FOR_1US);  // no steps and 1us cycle
-  pio_sm_put(pio, sm, entry);
+  pio_sm_exec(pio, sm, pio_encode_mov(pio_pins, pio_null));
+  setDirPinState(queue_end.dir);
 
   // and empty the buffer
   read_idx = next_write_idx;
+
+  // and clear the offset
+  pos_offset = 0;
 }
 bool StepperQueue::isRunning() {
   if (!pio_sm_is_tx_fifo_empty(pio, sm)) {
