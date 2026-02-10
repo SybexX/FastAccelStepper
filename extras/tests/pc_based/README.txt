@@ -106,6 +106,9 @@ Tests;
   4. Minimum RMT symbol period must be >= 2 ticks (hardware limit)
   5. For ticks=65535, special encoding uses 2 RMT entries per step
 
+- test 19
+  ramp up with 100 step/s^2 to max speed. should not coast (#347)
+
 - ramp_helper
   Helper tool to generate and dump ramp commands for given speed and acceleration
   Usage: make ramp_helper && ./ramp_helper <speed_us> <acceleration> <steps>

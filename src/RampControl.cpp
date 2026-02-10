@@ -25,7 +25,9 @@ void init_ramp_module() {
 
 // #define TRACE
 #ifdef TRACE
-#define TRACE_OUTPUT(x) Serial.print(x)
+#ifdef TEST
+#define TRACE_OUTPUT(x) printf(": %c \n",x)
+#endif
 #else
 #define TRACE_OUTPUT(x)
 #endif
@@ -104,28 +106,29 @@ void _getNextCommand(const struct ramp_ro_s* ramp, const struct ramp_rw_s* rw,
     remaining_steps = fas_abs(delta);
   }
 
+  uint32_t performed_ramp_up_steps = rw->performed_ramp_up_steps;
+
 #ifdef TRACE
   if (remaining_steps == performed_ramp_up_steps) {
-    Serial.print('=');
+    TRACE_OUTPUT('=');
   } else if (remaining_steps > performed_ramp_up_steps) {
     uint32_t dx = remaining_steps - performed_ramp_up_steps;
     if (dx < 10) {
       char ch = '0' + dx;
-      Serial.print(ch);
-      Serial.print('x');
+      TRACE_OUTPUT(ch);
+      TRACE_OUTPUT('x');
     }
   } else {
     uint32_t dx = performed_ramp_up_steps - remaining_steps;
     if (dx < 10) {
       char ch = '0' + dx;
-      Serial.print(ch);
-      Serial.print('y');
+      TRACE_OUTPUT(ch);
+      TRACE_OUTPUT('y');
     }
   }
 #endif
 
   // If not moving, then use requested direction
-  uint32_t performed_ramp_up_steps = rw->performed_ramp_up_steps;
   if (performed_ramp_up_steps == 0) {
     count_up = need_count_up;
   }
@@ -178,15 +181,19 @@ void _getNextCommand(const struct ramp_ro_s* ramp, const struct ramp_rw_s* rw,
         // part dec
         uint32_t possible_coast_steps =
             (remaining_steps - performed_ramp_up_steps) >> 2;
-        if (possible_coast_steps > 0) {
+#ifdef TEST
+            printf("possible coast steps %d, prus=%d\n", possible_coast_steps,
+                   performed_ramp_up_steps);
+#endif
+        if ((possible_coast_steps > 0) && (possible_coast_steps <= 510)) {
           // curr_ticks is not necessarily correct due to speed increase
           uint32_t coast_time = possible_coast_steps * rw->curr_ticks;
           if (coast_time < 2 * MIN_CMD_TICKS) {
             TRACE_OUTPUT('l');
             this_state = RAMP_STATE_COAST;
 #ifdef TEST
-            printf("high speed coast %d %d\n", possible_coast_steps,
-                   remaining_steps - performed_ramp_up_steps);
+            printf("high speed coast %d %d coast_time=%d\n", possible_coast_steps,
+                   remaining_steps - performed_ramp_up_steps, coast_time);
 #endif
           }
         }
