@@ -305,9 +305,7 @@ bool StepperQueue::isValidStepPin(uint8_t step_pin) {
 // After detecting the condition the handler pushes as many commands as
 // possible from the software queue into the FIFO.  When the software queue is
 // empty, the interrupt source for that SM is disabled to prevent the
-// level-triggered interrupt from firing continuously.  The source is
-// re-enabled by startQueue() (initial fill), which is
-// called periodically from StepperTaskQueue.
+// level-triggered interrupt from firing continuously. 
 //
 //*************************************************************************************************
 
