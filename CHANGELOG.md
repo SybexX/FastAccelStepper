@@ -1,5 +1,7 @@
 pre-0.33.13:
 - pico: Fill pio-TX-queue by interrupt and not by a RTOS-Task (#345)
+- #347: fix ramp control to avoid overflow in multiplication
+- fix: make `forward/backwardStep()` operational right after `forceStop()`
 
 0.33.12:
 - esp32: change minimum period to 4 from 2 in order to fix #306

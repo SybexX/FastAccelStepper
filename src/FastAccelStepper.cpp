@@ -913,6 +913,8 @@ bool FastAccelStepper::isRunning() {
 void FastAccelStepper::performOneStep(bool count_up, bool blocking) {
   if (!isRunning()) {
     if (count_up || (_dirPin != PIN_UNDEFINED)) {
+      StepperQueue* q = &fas_queue[_queue_num];
+      q->ignore_commands = false;
       struct stepper_command_s cmd = {
           .ticks = MIN_CMD_TICKS, .steps = 1, .count_up = count_up};
       addQueueEntry(&cmd);
